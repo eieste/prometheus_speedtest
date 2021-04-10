@@ -1,0 +1,5 @@
+# Changelog
+
+* increase dependencies (speedtest-cli 2.1.3)
+* Add remotes cli flag
+  This feature allows to trigger multiple instances of this Speedtest to measure larger bandwidths from different devices

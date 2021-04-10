@@ -13,8 +13,11 @@ from absl import logging
 from prometheus_client import core
 import prometheus_client
 import speedtest
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
 from prometheus_speedtest import version
+from prometheus_client.parser import text_string_to_metric_families
+
 
 flags.DEFINE_string('address', '0.0.0.0', 'address to listen on')
 flags.DEFINE_integer('port', 9516, 'port to listen on')
@@ -24,8 +27,29 @@ flags.DEFINE_list(
 flags.DEFINE_list(
     'excludes', [],
     'speedtest server(s) to exclude - leave empty for no exclusion')
+flags.DEFINE_list('remotes', [], 'additional speedtest trigger')
+
 flags.DEFINE_boolean('version', False, 'show version')
 FLAGS = flags.FLAGS
+
+
+class SpeedtestData:
+
+    def __init__(self):
+        self.download_speed_bps = 0
+        self.upload_speed_bps = 0
+        self.ping_ms = 0
+        self.bytes_received = 0
+        self.bytes_sent = 0
+        self.count = 0
+
+    def add(self, download_speed_bps, upload_speed_bps, ping_ms, bytes_received, bytes_sent):
+        self.download_speed_bps += download_speed_bps
+        self.upload_speed_bps += upload_speed_bps
+        self.ping_ms += ping_ms
+        self.bytes_received +=  bytes_received
+        self.bytes_sent += bytes_sent
+        self.count += 1
 
 
 class PrometheusSpeedtest():
@@ -90,30 +114,113 @@ class SpeedtestCollector():
             core.Metric objects.
         """
         results = self._tester.test()
+        return {
+            "download_speed_bps": results.download,
+            "upload_speed_bps": results.upload,
+            "ping_ms": results.ping,
+            "bytes_received": results.bytes_received,
+            "bytes_sent": results.bytes_sent,
+        }
+        #
+        # download_speed = core.GaugeMetricFamily('download_speed_bps',
+        #                                         'Download speed (bit/s)')
+        # download_speed.add_metric(labels=[], value=results.download)
+        # yield download_speed
+        #
+        # upload_speed = core.GaugeMetricFamily('upload_speed_bps',
+        #                                       'Upload speed (bit/s)')
+        # upload_speed.add_metric(labels=[], value=results.upload)
+        # yield upload_speed
+        #
+        # ping = core.GaugeMetricFamily('ping_ms', 'Latency (ms)')
+        # ping.add_metric(labels=[], value=results.ping)
+        # yield ping
+        #
+        # bytes_received = core.GaugeMetricFamily('bytes_received',
+        #                                         'Bytes received during test')
+        # bytes_received.add_metric(labels=[], value=results.bytes_received)
+        # yield bytes_received
+        #
+        # bytes_sent = core.GaugeMetricFamily('bytes_sent',
+        #                                     'Bytes sent during test')
+        # bytes_sent.add_metric(labels=[], value=results.bytes_sent)
+        # yield bytes_sent
+
+
+class RemoteSpeedtestCollector():
+    """
+        Trigger remote Speedtests
+    """
+
+    """Performs Speedtests when requested from Prometheus."""
+    def __init__(self,
+                 tester: Optional[PrometheusSpeedtest] = None,
+                 servers: Optional[Sequence[str]] = None,
+                 excludes: Optional[Sequence[str]] = None,
+                 remotes: Optional[Sequence[str]] = None):
+        """Instantiates a SpeedtestCollector object.
+
+        Args:
+            tester: An instantiated PrometheusSpeedtest object for testing.
+            servers: servers-id to use when tester is auto-created
+        """
+        self._remotes = remotes
+        self._tester = tester
+        self._servers = servers
+        self._excludes = excludes
+
+    def collect(self):
+
+        speedtest_data = SpeedtestData()
+        result = []
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            local_speed_test = SpeedtestCollector(tester=self._tester, servers=self._servers, excludes=self._excludes)
+            result.append(executor.submit(local_speed_test.collect))
+
+            for url in self._remotes:
+                result.append(executor.submit(remote_collector, url))
+
+                for future in as_completed(result):
+                    speedtest_data.add(**future.result())
+
+        speedtest_devices = core.CounterMetricFamily('speedtest_devices', 'Count of devices used for Speedtest-Results (pc)')
+        speedtest_devices.add_metric(labels=[], value=speedtest_data.count)
+        yield speedtest_devices
 
         download_speed = core.GaugeMetricFamily('download_speed_bps',
                                                 'Download speed (bit/s)')
-        download_speed.add_metric(labels=[], value=results.download)
+        download_speed.add_metric(labels=[], value=speedtest_data.download_speed_bps)
         yield download_speed
 
         upload_speed = core.GaugeMetricFamily('upload_speed_bps',
                                               'Upload speed (bit/s)')
-        upload_speed.add_metric(labels=[], value=results.upload)
+        upload_speed.add_metric(labels=[], value=speedtest_data.upload_speed_bps)
         yield upload_speed
 
-        ping = core.GaugeMetricFamily('ping_ms', 'Latency (ms)')
-        ping.add_metric(labels=[], value=results.ping)
+        ping = core.GaugeMetricFamily('ping_ms', 'Latency Average (ms)')
+        ping.add_metric(labels=[], value=speedtest_data.ping_ms/speedtest_data.count)
         yield ping
 
         bytes_received = core.GaugeMetricFamily('bytes_received',
                                                 'Bytes received during test')
-        bytes_received.add_metric(labels=[], value=results.bytes_received)
+        bytes_received.add_metric(labels=[], value=speedtest_data.bytes_received)
         yield bytes_received
 
         bytes_sent = core.GaugeMetricFamily('bytes_sent',
                                             'Bytes sent during test')
-        bytes_sent.add_metric(labels=[], value=results.bytes_sent)
+        bytes_sent.add_metric(labels=[], value=speedtest_data.bytes_sent)
         yield bytes_sent
+
+def remote_collector(url):
+    logging.info('Fetch from URL: %s', url)
+    metrics = requests.get(url).text
+    result = {}
+    for family in text_string_to_metric_families(metrics):
+      for sample in family.samples:
+          result.update({sample[0]: sample[2]})
+    logging.info('Results: %s', result)
+    return result
 
 
 class SpeedtestMetricsHandler(server.SimpleHTTPRequestHandler,
@@ -151,8 +258,14 @@ def main(argv):
         logging.fatal(
             '--excludes is a superset of --includes, no viable test server is '
             'possible. Ensure --excludes does not contain all --servers.')
-    registry.register(
-        SpeedtestCollector(servers=FLAGS.servers, excludes=FLAGS.excludes))
+
+    # TEST_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDFfoobar
+
+    registry.register(RemoteSpeedtestCollector(servers=FLAGS.servers,
+                                         excludes=FLAGS.excludes,
+                                         remotes=FLAGS.remotes)
+                                         )
+
     metrics_handler = SpeedtestMetricsHandler.factory(registry)
 
     http = server.ThreadingHTTPServer((FLAGS.address, FLAGS.port),
