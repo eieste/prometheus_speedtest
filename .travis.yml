@@ -16,6 +16,6 @@ script:
   - python -c 'from prometheus_speedtest import prometheus_speedtest as p; p.FLAGS.version = True; p.init()'
   - pylint **/*.py
   - pytest
-  - pytype
+  #- pytype
   - yapf -d **/*.py
   - mdl README.md
