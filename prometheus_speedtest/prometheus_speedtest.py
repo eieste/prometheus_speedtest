@@ -190,7 +190,7 @@ class RemoteSpeedtestCollector():
         speedtest_data = SpeedtestData()
         result = []
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=15) as executor:
             local_speed_test = SpeedtestCollector(tester=self._tester,
                                                   servers=self._servers,
                                                   excludes=self._excludes)
@@ -203,7 +203,7 @@ class RemoteSpeedtestCollector():
                 speedtest_data.add(**future.result())
 
         speedtest_devices = core.CounterMetricFamily(
-            'speedtest_devices',
+            'speedtest_device_count',
             'Count of devices used for Speedtest-Results (pc)')
         speedtest_devices.add_metric(labels=[], value=speedtest_data.count)
         yield speedtest_devices

@@ -2,7 +2,7 @@
 
 Instrument [Speedtest.net](http://speedtest.net) tests from
 [Prometheus](https://prometheus.io). Provides metrics on download\_speed,
-upload\_speed, and latency.
+upload\_speed, and latency. In addition, parallel installations can also be triggered to measure larger bandwidths
 
 [![Build Status](https://travis-ci.org/jeanralphaviles/prometheus_speedtest.svg?branch=master)](https://travis-ci.org/jeanralphaviles/prometheus_speedtest/branches)
 [![Docker Build Status](https://img.shields.io/docker/build/jraviles/prometheus_speedtest.svg)](https://hub.docker.com/r/jraviles/prometheus_speedtest/)
@@ -52,7 +52,28 @@ prometheus_speedtest.py:
     (a comma separated list)
   --[no]version: show version
     (default: 'false')
+  --remotes: additional speedtest trigger
+    (default: '')
+    (a comma separated list)
 ```
+### Systemunit File
+
+```
+[Unit]
+Description=Prometheus Speedtest Exporter
+After=network.target
+
+[Service]
+User=prometheus
+Group=prometheus
+WorkingDirectory=/opt/speedtestprometheus
+Environment="PATH=/opt/speedtestprometheus/venv/bin"
+ExecStart=/opt/speedtestprometheus/venv/bin/prometheus_speedtest
+
+[Install]
+WantedBy=multi-user.target
+```
+
 
 ### Running with Docker
 
@@ -99,13 +120,14 @@ Speedtests on an interval and record their results.
 
 Speedtest metrics available to query in Prometheus.
 
-| Metric Name           | Description                 |
-|---------------------- |---------------------------- |
-| download\_speed\_bps  | Download speed (bit/s)      |
-| upload\_speed\_bps    | Upload speed (bit/s)        |
-| ping\_ms              | Latency (ms)                |
-| bytes\_received       | Bytes received during test  |
-| bytes\_sent           | Bytes sent during test      |
+| Metric Name             | Description                           |
+|------------------------ |-------------------------------------- |
+| download\_speed\_bps    | Download speed (bit/s)                |
+| upload\_speed\_bps      | Upload speed (bit/s)                  |
+| ping\_ms                | Latency (ms)                          |
+| bytes\_received         | Bytes received during test            |
+| bytes\_sent             | Bytes sent during test                |
+| speedtest\_device\_count| Count of devices used for measurement |
 
 #### prometheus.yml config
 
@@ -180,6 +202,9 @@ Speedtests can be instrumented with [cURL](https://curl.haxx.se).
 
 ```shell
 $ curl localhost:9516/probe
+# HELP speedtest_devices_total Count of devices used for Speedtest-Results (pc)
+# TYPE speedtest_devices_total counter
+speedtest_devices_total 3.0
 # HELP download_speed_bps Download speed (bit/s)
 # TYPE download_speed_bps gauge
 download_speed_bps 88016694.95692767
@@ -205,6 +230,20 @@ metrics.
 Prometheus Speedtest defaults to running on port 9516; this is the allocated
 port for this exporter in the
 [Prometheus Default Port Allocations Guide](https://github.com/prometheus/prometheus/wiki/Default-port-allocations).
+
+### Remotes
+
+Prometheus Speedtest can start other speed tests in parallel using the --remotes parameter.
+To do this, this Prometheus speed test must be installed on several devices.
+In Prometheus, you define a main installation.
+The main installation is called up with the parameter.
+
+```shell
+--remotes http://otherspeedtestdevice:9516/probe,http://anotherotherspeedtestdevice:9516/probe.
+```
+As soon as Prometheus queries the values of the main installation, parallel speed tests are started under the specified URLs. The main installation then returns the summed values. (An average value is determined for the ping (latency)).   
+
+> Prometheus Speedtest supports up to 15 parallel measurements
 
 ## Getting Started (Development)
 
