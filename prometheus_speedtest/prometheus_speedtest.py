@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 
-
 from absl import app
 from absl import flags
 from absl import logging
