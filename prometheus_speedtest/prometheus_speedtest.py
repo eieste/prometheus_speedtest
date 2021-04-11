@@ -18,7 +18,6 @@ import requests
 from prometheus_speedtest import version
 from prometheus_client.parser import text_string_to_metric_families
 
-
 flags.DEFINE_string('address', '0.0.0.0', 'address to listen on')
 flags.DEFINE_integer('port', 9516, 'port to listen on')
 flags.DEFINE_list(
@@ -34,7 +33,6 @@ FLAGS = flags.FLAGS
 
 
 class SpeedtestData:
-
     def __init__(self):
         self.download_speed_bps = 0
         self.upload_speed_bps = 0
@@ -43,11 +41,12 @@ class SpeedtestData:
         self.bytes_sent = 0
         self.count = 0
 
-    def add(self, download_speed_bps, upload_speed_bps, ping_ms, bytes_received, bytes_sent):
+    def add(self, download_speed_bps, upload_speed_bps, ping_ms,
+            bytes_received, bytes_sent):
         self.download_speed_bps += download_speed_bps
         self.upload_speed_bps += upload_speed_bps
         self.ping_ms += ping_ms
-        self.bytes_received +=  bytes_received
+        self.bytes_received += bytes_received
         self.bytes_sent += bytes_sent
         self.count += 1
 
@@ -151,7 +150,6 @@ class RemoteSpeedtestCollector():
     """
         Trigger remote Speedtests
     """
-
     """Performs Speedtests when requested from Prometheus."""
     def __init__(self,
                  tester: Optional[PrometheusSpeedtest] = None,
@@ -175,7 +173,9 @@ class RemoteSpeedtestCollector():
         result = []
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            local_speed_test = SpeedtestCollector(tester=self._tester, servers=self._servers, excludes=self._excludes)
+            local_speed_test = SpeedtestCollector(tester=self._tester,
+                                                  servers=self._servers,
+                                                  excludes=self._excludes)
             result.append(executor.submit(local_speed_test.collect))
 
             for url in self._remotes:
@@ -184,27 +184,33 @@ class RemoteSpeedtestCollector():
                 for future in as_completed(result):
                     speedtest_data.add(**future.result())
 
-        speedtest_devices = core.CounterMetricFamily('speedtest_devices', 'Count of devices used for Speedtest-Results (pc)')
+        speedtest_devices = core.CounterMetricFamily(
+            'speedtest_devices',
+            'Count of devices used for Speedtest-Results (pc)')
         speedtest_devices.add_metric(labels=[], value=speedtest_data.count)
         yield speedtest_devices
 
         download_speed = core.GaugeMetricFamily('download_speed_bps',
                                                 'Download speed (bit/s)')
-        download_speed.add_metric(labels=[], value=speedtest_data.download_speed_bps)
+        download_speed.add_metric(labels=[],
+                                  value=speedtest_data.download_speed_bps)
         yield download_speed
 
         upload_speed = core.GaugeMetricFamily('upload_speed_bps',
                                               'Upload speed (bit/s)')
-        upload_speed.add_metric(labels=[], value=speedtest_data.upload_speed_bps)
+        upload_speed.add_metric(labels=[],
+                                value=speedtest_data.upload_speed_bps)
         yield upload_speed
 
         ping = core.GaugeMetricFamily('ping_ms', 'Latency Average (ms)')
-        ping.add_metric(labels=[], value=speedtest_data.ping_ms/speedtest_data.count)
+        ping.add_metric(labels=[],
+                        value=speedtest_data.ping_ms / speedtest_data.count)
         yield ping
 
         bytes_received = core.GaugeMetricFamily('bytes_received',
                                                 'Bytes received during test')
-        bytes_received.add_metric(labels=[], value=speedtest_data.bytes_received)
+        bytes_received.add_metric(labels=[],
+                                  value=speedtest_data.bytes_received)
         yield bytes_received
 
         bytes_sent = core.GaugeMetricFamily('bytes_sent',
@@ -212,13 +218,14 @@ class RemoteSpeedtestCollector():
         bytes_sent.add_metric(labels=[], value=speedtest_data.bytes_sent)
         yield bytes_sent
 
+
 def remote_collector(url):
     logging.info('Fetch from URL: %s', url)
     metrics = requests.get(url).text
     result = {}
     for family in text_string_to_metric_families(metrics):
-      for sample in family.samples:
-          result.update({sample[0]: sample[2]})
+        for sample in family.samples:
+            result.update({sample[0]: sample[2]})
     logging.info('Results: %s', result)
     return result
 
@@ -261,10 +268,10 @@ def main(argv):
 
     # TEST_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDF_ASDFfoobar
 
-    registry.register(RemoteSpeedtestCollector(servers=FLAGS.servers,
-                                         excludes=FLAGS.excludes,
-                                         remotes=FLAGS.remotes)
-                                         )
+    registry.register(
+        RemoteSpeedtestCollector(servers=FLAGS.servers,
+                                 excludes=FLAGS.excludes,
+                                 remotes=FLAGS.remotes))
 
     metrics_handler = SpeedtestMetricsHandler.factory(registry)
 
