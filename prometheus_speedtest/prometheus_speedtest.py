@@ -5,18 +5,19 @@ from typing import Optional
 from typing import Sequence
 from http import server
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
+
 
 from absl import app
 from absl import flags
 from absl import logging
-from prometheus_client import core
 import prometheus_client
+from prometheus_client import core
+from prometheus_client.parser import text_string_to_metric_families
 import speedtest
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from prometheus_speedtest import version
-from prometheus_client.parser import text_string_to_metric_families
 
 flags.DEFINE_string('address', '0.0.0.0', 'address to listen on')
 flags.DEFINE_integer('port', 9516, 'port to listen on')
@@ -33,7 +34,9 @@ FLAGS = flags.FLAGS
 
 
 class SpeedtestData:
+    """Stores all Measurement Information form speedtests"""
     def __init__(self):
+        """Instantiates the SpeedtestData object."""
         self.download_speed_bps = 0
         self.upload_speed_bps = 0
         self.ping_ms = 0
@@ -41,13 +44,21 @@ class SpeedtestData:
         self.bytes_sent = 0
         self.count = 0
 
-    def add(self, download_speed_bps, upload_speed_bps, ping_ms,
-            bytes_received, bytes_sent):
-        self.download_speed_bps += download_speed_bps
-        self.upload_speed_bps += upload_speed_bps
-        self.ping_ms += ping_ms
-        self.bytes_received += bytes_received
-        self.bytes_sent += bytes_sent
+    def add(self, **kwargs):
+        """Adds up all speedtest values
+
+        Args:
+            download_speed_bps: int download speed in bps
+            upload_speed_bps: int upload speed in bps.
+            ping_ms: int of latency to speedtest server in ms
+            bytes_received: int bytes recived to determine the download speed
+            bytes_sent: int bytes sent to determine the download speed
+        """
+        self.download_speed_bps += kwargs.get("download_speed_bps")
+        self.upload_speed_bps += kwargs.get("upload_speed_bps")
+        self.ping_ms += kwargs.get("ping_ms")
+        self.bytes_received += kwargs.get("bytes_received")
+        self.bytes_sent += kwargs.get("bytes_sent")
         self.count += 1
 
 
@@ -109,8 +120,7 @@ class SpeedtestCollector():
     def collect(self):
         """Performs a Speedtests and yields metrics.
 
-        Yields:
-            core.Metric objects.
+        Return: dict with all local speedtest measurements
         """
         results = self._tester.test()
         return {
@@ -150,7 +160,6 @@ class RemoteSpeedtestCollector():
     """
         Trigger remote Speedtests
     """
-    """Performs Speedtests when requested from Prometheus."""
     def __init__(self,
                  tester: Optional[PrometheusSpeedtest] = None,
                  servers: Optional[Sequence[str]] = None,
@@ -161,14 +170,24 @@ class RemoteSpeedtestCollector():
         Args:
             tester: An instantiated PrometheusSpeedtest object for testing.
             servers: servers-id to use when tester is auto-created
+            excludes: servers-id to exclude in tester
+            remotes: urls for remote measurements
         """
-        self._remotes = remotes
+        if remotes is None:
+            self._remotes = []
+        else:
+            self._remotes = remotes
         self._tester = tester
         self._servers = servers
         self._excludes = excludes
 
     def collect(self):
+        """
+            Collects information from remote urls and local speedtest
 
+            Yields:
+                core.Metric objects.
+        """
         speedtest_data = SpeedtestData()
         result = []
 
@@ -181,8 +200,8 @@ class RemoteSpeedtestCollector():
             for url in self._remotes:
                 result.append(executor.submit(remote_collector, url))
 
-                for future in as_completed(result):
-                    speedtest_data.add(**future.result())
+            for future in as_completed(result):
+                speedtest_data.add(**future.result())
 
         speedtest_devices = core.CounterMetricFamily(
             'speedtest_devices',
@@ -220,6 +239,10 @@ class RemoteSpeedtestCollector():
 
 
 def remote_collector(url):
+    """
+        Helper function for ThreadPoolExecuter
+        This function trigger the remote urls to do thier speed tests
+    """
     logging.info('Fetch from URL: %s', url)
     metrics = requests.get(url).text
     result = {}

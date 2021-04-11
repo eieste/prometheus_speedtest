@@ -48,14 +48,13 @@ class SpeedtestCollectorTest(unittest.TestCase):
         """Ensures correctness of SpeedtestCollector.collect()."""
         mock_tester = mock.create_autospec(
             prometheus_speedtest.PrometheusSpeedtest)
-        collector = prometheus_speedtest.SpeedtestCollector(mock_tester)
+        collector = prometheus_speedtest.RemoteSpeedtestCollector(mock_tester)
 
         speedtest_results = [10, 5, 30, 100, 20]
         mock_tester.test.return_value = SpeedtestCollectorTest._results(
             *speedtest_results)
 
         collections.deque(collector.collect())
-
         mock_metric.assert_has_calls(
             [mock.call(labels=[], value=value) for value in speedtest_results])
 
